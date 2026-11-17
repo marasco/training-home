@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Circuito</title>
+<style>
+  :root { --bg:#111; --fg:#f4f4f4; --mut:#8c8c8c; --card:#1d1d1d; --acc:#ff0068; --ok:#22c55e; --rest:#3b82f6; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font-family:system-ui,sans-serif; min-height:100vh; }
+  main { max-width:720px; margin:0 auto; padding:16px; }
+  h1 { font-size:20px; margin:8px 0 16px; }
+  .card { background:var(--card); border-radius:12px; padding:16px; margin-bottom:16px; }
+  .row { display:flex; gap:8px; margin-bottom:8px; align-items:center; }
+  input { background:#111; color:var(--fg); border:1px solid #333; border-radius:8px; padding:10px; font-size:16px; min-width:0; }
+  input.name { flex:1 1 40%; } input.times { flex:1 1 40%; }
+  label { display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--mut); flex:1; }
+  label input { width:100%; }
+  button { background:#2a2a2a; color:var(--fg); border:0; border-radius:8px; padding:10px 14px; font-size:16px; cursor:pointer; }
+  button.primary { background:var(--acc); font-weight:600; }
+  button.big { width:100%; padding:16px; font-size:18px; }
+  .hint { color:var(--mut); font-size:13px; margin:4px 0 12px; }
+  #run { display:none; text-align:center; }
+  #run.on { display:block; }
+  #cfg.off { display:none; }
+  .phase { font-size:14px; letter-spacing:.1em; text-transform:uppercase; color:var(--mut); margin-top:8px; }
+  .now { font-size:clamp(32px,9vw,56px); font-weight:700; margin:8px 0; }
+  .time { font-size:clamp(96px,32vw,200px); font-weight:800; line-height:1; font-variant-numeric:tabular-nums; }
+  .bar { height:10px; background:#2a2a2a; border-radius:5px; overflow:hidden; margin:16px 0; }
+  .bar > div { height:100%; background:var(--acc); width:0; }
+  .next { color:var(--mut); font-size:20px; margin:12px 0 20px; }
+  .next b { color:var(--fg); }
+  .ctrl { display:flex; gap:8px; }
+  .ctrl button { flex:1; padding:16px; }
+  body.rest .time, body.rest .now { color:var(--rest); } body.rest .bar > div { background:var(--rest); }
+  body.prep .time { color:var(--ok); } body.prep .bar > div { background:var(--ok); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Circuito</h1>
+
+  <div id="cfg">
+    <div class="card">
+      <div id="list"></div>
+      <button id="add">+ Ejercicio</button>
+      <p class="hint">Tiempos en segundos, separados por coma: el 1º se usa en la vuelta 1, el 2º en la vuelta 2, etc. (ej. 40,45,50,45 = 4 vueltas).</p>
+    </div>
+    <div class="card">
+      <div class="row">
+        <label>Duración del pitido entre ejercicios (seg)<input id="beepLen" type="number" min="0" step="0.1"></label>
+        <label>Cuenta inicial (seg)<input id="prep" type="number" min="0"></label>
+        <label>Transición entre ejercicios (seg)<input id="trans" type="number" min="0"></label>
+      </div>
+      <div class="row">
+        <label>Descanso entre vueltas (seg)<input id="restLen" type="number" min="0"></label>
+      </div>
+    </div>
+    <button id="start" class="primary big">Empezar</button>
+  </div>
+
+  <div id="run" class="card">
+    <div class="phase" id="phase"></div>
+    <div class="now" id="now"></div>
+    <div class="time" id="time">0</div>
+    <div class="bar"><div id="bar"></div></div>
+    <div class="next" id="next"></div>
+    <div class="ctrl">
+      <button id="prev">⏮</button>
+      <button id="pause">Pausa</button>
+      <button id="skip">⏭</button>
+      <button id="stop">Salir</button>
+    </div>
+  </div>
+</main>
+
+<script>
+const DEFAULTS = {
+  exercises: [
+    { name: 'Sentadilla', times: '40,45,50,45' },
+    { name: 'Abdominales', times: '20,25,30,25' },
+    { name: 'Remo con banda elástica', times: '40,45,50,45' },
+    { name: 'Plancha', times: '20,25,30,25' },
+    { name: 'Hombros', times: '30,35,40,35' },
+  ],
+  beepLen: 1, prep: 5, trans: 10, restLen: 60,
+};
+const KEY = 'circuito-cfg';
+let cfg;
+try { cfg = JSON.parse(localStorage.getItem(KEY)) || DEFAULTS; } catch { cfg = DEFAULTS; }
+cfg = { ...DEFAULTS, ...cfg };
+
+const $ = id => document.getElementById(id);
+
+/* ---------- form ---------- */
+function renderList() {
+  $('list').innerHTML = '';
+  cfg.exercises.forEach((ex, i) => {
+    const r = document.createElement('div'); r.className = 'row';
+    r.innerHTML = `<input class="name" placeholder="Ejercicio"><input class="times" placeholder="40,45,50"><button title="Quitar">✕</button>`;
+    const [n, t, x] = r.children;
+    n.value = ex.name; t.value = ex.times;
+    n.oninput = () => ex.name = n.value;
+    t.oninput = () => ex.times = t.value;
+    x.onclick = () => { cfg.exercises.splice(i, 1); renderList(); };
+    $('list').appendChild(r);
+  });
+}
+const nums = ['beepLen', 'prep', 'trans', 'restLen'];
+nums.forEach(k => { $(k).value = cfg[k]; $(k).oninput = () => cfg[k] = parseFloat($(k).value) || 0; });
+$('add').onclick = () => { cfg.exercises.push({ name: '', times: '30' }); renderList(); };
+renderList();
+
+/* ---------- sound ---------- */
+let ac;
+function beep(freq = 880, dur = 0.15) {
+  if (!ac) return;
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.frequency.value = freq; o.type = 'sine';
+  o.connect(g); g.connect(ac.destination);
+  const t = ac.currentTime;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.5, t + 0.01);
+  g.gain.setValueAtTime(0.5, t + Math.max(0.02, dur - 0.03));
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.start(t); o.stop(t + dur + 0.02);
+}
+
+/* ---------- steps ---------- */
+function buildSteps() {
+  const steps = [];
+  if (cfg.prep > 0) steps.push({ kind: 'prep', label: 'Prepárate', secs: cfg.prep });
+  const exs = cfg.exercises
+    .map(e => ({ name: e.name.trim() || 'Ejercicio', times: e.times.split(/[,\s]+/).map(Number).filter(n => n > 0) }))
+    .filter(e => e.times.length);
+  const rounds = Math.max(0, ...exs.map(e => e.times.length));
+  for (let r = 0; r < rounds; r++) {
+    let first = true;
+    exs.forEach(e => {
+      if (r < e.times.length) {
+        if (!first && cfg.trans > 0)
+          steps.push({ kind: 'trans', label: 'Prepárate', secs: cfg.trans, round: r + 1, rounds });
+        first = false;
+        steps.push({ kind: 'work', label: e.name, secs: e.times[r], round: r + 1, rounds });
+      }
+    });
+    if (cfg.restLen > 0 && r < rounds - 1)
+      steps.push({ kind: 'rest', label: 'Descanso', secs: cfg.restLen, round: r + 1, rounds });
+  }
+  return steps;
+}
+
+/* ---------- runner ---------- */
+let steps = [], idx = 0, remaining = 0, paused = false, timer = null, lastTick = 0, wake = null;
+
+function show() {
+  const s = steps[idx];
+  document.body.className = s.kind === 'rest' ? 'rest' : s.kind === 'prep' || s.kind === 'trans' ? 'prep' : '';
+  $('phase').textContent = s.kind === 'prep' ? 'Cuenta inicial' : `Vuelta ${s.round}/${s.rounds}`;
+  $('now').textContent = s.label;
+  const n = steps[idx + 1];
+  $('next').innerHTML = n ? `Sigue: <b>${n.kind === 'work' ? `${n.label} · ${n.secs}s` : n.kind === 'rest' ? `Descanso · ${n.secs}s` : n.kind === 'trans' ? `Prepárate · ${n.secs}s` : n.label}</b>` : 'Sigue: <b>Fin</b>';
+  paint();
+}
+function paint() {
+  const s = steps[idx];
+  $('time').textContent = Math.ceil(remaining);
+  $('bar').style.width = (100 * (1 - remaining / s.secs)) + '%';
+}
+function go(i, sound = true) {
+  if (i < 0) i = 0;
+  if (i >= steps.length) return finish();
+  idx = i; remaining = steps[i].secs;
+  if (sound && steps[i].kind !== 'prep' && steps[i].kind !== 'trans') beep(steps[i].kind === 'work' ? 1000 : 600, Math.max(0.05, cfg.beepLen));
+  lastShown = Math.ceil(remaining);
+  show();
+}
+let lastShown = 0;
+function tick() {
+  const now = performance.now(), dt = (now - lastTick) / 1000; lastTick = now;
+  if (paused) return;
+  remaining -= dt;
+  const c = Math.ceil(remaining);
+  if (c !== lastShown && c > 0 && c <= 3) beep(660, 0.1);
+  lastShown = c;
+  if (remaining <= 0) return go(idx + 1);
+  paint();
+}
+async function start() {
+  localStorage.setItem(KEY, JSON.stringify(cfg));
+  steps = buildSteps();
+  if (!steps.length) return alert('Agregá al menos un ejercicio con tiempos.');
+  ac = ac || new (window.AudioContext || window.webkitAudioContext)();
+  ac.resume();
+  $('cfg').classList.add('off'); $('run').classList.add('on');
+  paused = false; $('pause').textContent = 'Pausa';
+  try { wake = await navigator.wakeLock?.request('screen'); } catch {}
+  lastTick = performance.now();
+  go(0, false);
+  clearInterval(timer); timer = setInterval(tick, 100);
+}
+function finish() {
+  clearInterval(timer);
+  beep(1000, 0.3); setTimeout(() => beep(1200, 0.5), 400);
+  document.body.className = '';
+  $('phase').textContent = ''; $('now').textContent = '¡Listo!'; $('time').textContent = '✓';
+  $('bar').style.width = '100%'; $('next').textContent = '';
+}
+function stop() {
+  clearInterval(timer); wake?.release?.(); wake = null;
+  document.body.className = '';
+  $('run').classList.remove('on'); $('cfg').classList.remove('off');
+}
+$('start').onclick = start;
+$('stop').onclick = stop;
+$('skip').onclick = () => go(idx + 1);
+$('prev').onclick = () => go(remaining < steps[idx].secs - 2 ? idx : idx - 1);
+$('pause').onclick = () => { paused = !paused; lastTick = performance.now(); $('pause').textContent = paused ? 'Seguir' : 'Pausa'; };
+document.addEventListener('keydown', e => { if (!$('run').classList.contains('on')) return;
+  if (e.code === 'Space') { e.preventDefault(); $('pause').click(); }
+  if (e.code === 'ArrowRight') $('skip').click(); if (e.code === 'ArrowLeft') $('prev').click(); });
+</script>
+</body>
+</html>
